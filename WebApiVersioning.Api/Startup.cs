@@ -2,6 +2,7 @@ using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ApiExplorer;
 using Microsoft.AspNetCore.Mvc.Versioning;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,8 +12,11 @@ namespace WebApiVersioning.Api
 {
     public class Startup
     {
+        public const string APP_NAME = "WebApiVersioning";
+
         private const VersioningStrategies SELECTED_STRATEGY = VersioningStrategies.HttpHeader;
         public IConfiguration Configuration { get; }
+
 
         public Startup(IConfiguration configuration)
         {
@@ -24,10 +28,11 @@ namespace WebApiVersioning.Api
         public void ConfigureServices(IServiceCollection services)
         {
             services.AddControllers();
-            
+
             switch (SELECTED_STRATEGY)
             {
                 case VersioningStrategies.HttpHeader:
+
                     #region Versioning-HttpHeader
 
                     services.AddApiVersioning(options =>
@@ -36,18 +41,20 @@ namespace WebApiVersioning.Api
                         options.DefaultApiVersion = ApiVersion.Default;
                         options.AssumeDefaultVersionWhenUnspecified = true;
                         options.ReportApiVersions = true;
+                        options.RegisterMiddleware = true;
                     });
                     services.AddVersionedApiExplorer(options =>
                     {
                         options.ApiVersionParameterSource = new HeaderApiVersionReader("x-api-version");
                         options.DefaultApiVersion = ApiVersion.Default;
                         options.AssumeDefaultVersionWhenUnspecified = true;
-                
                     });
-            
+
                     #endregion
+
                     break;
                 case VersioningStrategies.QueryParams:
+
                     #region Versioning-QueryParams
 
                     services.AddApiVersioning(options =>
@@ -56,6 +63,7 @@ namespace WebApiVersioning.Api
                         options.DefaultApiVersion = ApiVersion.Default;
                         options.AssumeDefaultVersionWhenUnspecified = true;
                         options.ReportApiVersions = true;
+                        options.RegisterMiddleware = true;
                     });
                     services.AddVersionedApiExplorer(options =>
                     {
@@ -65,16 +73,19 @@ namespace WebApiVersioning.Api
                     });
 
                     #endregion
+
                     break;
                 case VersioningStrategies.Uri:
+
                     #region Versioning-Uri
-            
+
                     services.AddApiVersioning(options =>
                     {
                         options.ApiVersionReader = new UrlSegmentApiVersionReader();
                         options.DefaultApiVersion = ApiVersion.Default;
                         options.AssumeDefaultVersionWhenUnspecified = true;
                         options.ReportApiVersions = true;
+                        options.RegisterMiddleware = true;
                     });
                     services.AddVersionedApiExplorer(options =>
                     {
@@ -83,17 +94,37 @@ namespace WebApiVersioning.Api
                         options.AssumeDefaultVersionWhenUnspecified = true;
                         options.SubstituteApiVersionInUrl = true;
                     });
-            
+
                     #endregion
+
                     break;
                 default:
                     throw new ArgumentOutOfRangeException();
             }
-            
-            services.AddSwaggerGen(c =>
+
+            AddSwagger(services);
+        }
+
+        private static void AddSwagger(IServiceCollection services)
+        {
+            services.AddSwaggerGen(options =>
             {
-                c.SwaggerDoc("1", new OpenApiInfo { Title = "WebApiVersioning.Api v1", Version = "1" });
-                c.SwaggerDoc("2", new OpenApiInfo { Title = "WebApiVersioning.Api v2", Version = "2" });
+#pragma warning disable ASP0000
+                using ServiceProvider serviceProvider = services.BuildServiceProvider();
+#pragma warning restore ASP0000
+                using IServiceScope scope = serviceProvider.CreateScope();
+                var versionProvider = scope.ServiceProvider.GetRequiredService<IApiVersionDescriptionProvider>();
+
+                foreach (ApiVersionDescription description in versionProvider.ApiVersionDescriptions)
+                {
+                    options.SwaggerDoc(description.GroupName, new()
+                                                              {
+                                                                  Title = $"{APP_NAME} {description.ApiVersion}",
+                                                                  Version = description.ApiVersion.ToString(),
+                                                              });
+                }
+
+                options.IncludeXmlComments($"{AppContext.BaseDirectory}/{APP_NAME}.Api.xml");
             });
         }
 
@@ -104,8 +135,14 @@ namespace WebApiVersioning.Api
             app.UseSwagger();
             app.UseSwaggerUI(c =>
             {
-                c.SwaggerEndpoint("/swagger/1/swagger.json", "1");
-                c.SwaggerEndpoint("/swagger/2/swagger.json", "2");
+                c.RoutePrefix = "";
+
+                using IServiceScope serviceScope = app.ApplicationServices.CreateScope();
+                var apiVersionDescriptionProvider = serviceScope.ServiceProvider.GetRequiredService<IApiVersionDescriptionProvider>();
+                foreach (ApiVersionDescription apiVersionDescription in apiVersionDescriptionProvider.ApiVersionDescriptions)
+                {
+                    c.SwaggerEndpoint($"/swagger/{apiVersionDescription.ApiVersion}/swagger.json", $"{APP_NAME} {apiVersionDescription.ApiVersion}");
+                }
             });
 
             app.UseRouting();
